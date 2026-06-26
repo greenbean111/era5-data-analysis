@@ -1,5 +1,5 @@
 SITES = {
-    "chile": {
+    "alma": {
         "name": "(ALMA region)",
         "path": r"C:\Users\2021n\Downloads\era5_wind_data_analysis\data\raw\chile\chile_*.nc",
         "lat": -23.029,
