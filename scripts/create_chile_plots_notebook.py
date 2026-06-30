@@ -1,0 +1,238 @@
+import json
+import os
+
+def create_notebook():
+    notebook_path = r"notebooks/Chile_Plots.ipynb"
+    
+    # Cells definition
+    cells = [
+        {
+            "cell_type": "markdown",
+            "metadata": {},
+            "source": [
+                "# ALMA Wind Gust Comparison: Ground-Based vs. ERA5\n",
+                "\n",
+                "This notebook compares the wind gust data from the ALMA ground meteorological station (`.met` files) with the ERA5 reanalysis wind gust data (`i10fg`) at the nearest grid point.\n",
+                "\n",
+                "### Note on ground-based gust column:\n",
+                "Analysis of the ESO meteorological files reveals that Column 6 (`gust` in the previous code) and Column 7 (`speed`) represent the same measurement, but in different units (`km/h` vs. `m/s` respectively). The correlation between the two is `0.99997`. To compare with ERA5, we load Column 6 (`gust` in `km/h`) and convert it to `m/s` by dividing by `3.6`."
+            ]
+        },
+        {
+            "cell_type": "code",
+            "execution_count": None,
+            "metadata": {},
+            "outputs": [],
+            "source": [
+                "# ============================================================\n",
+                "# IMPORTS & CONFIGURATION\n",
+                "# ============================================================\n",
+                "import os\n",
+                "import glob\n",
+                "import numpy as np\n",
+                "import pandas as pd\n",
+                "import xarray as xr\n",
+                "import matplotlib.pyplot as plt\n",
+                "\n",
+                "plt.style.use('default')\n",
+                "# Adjust some default parameters for a clean layout\n",
+                "plt.rcParams['font.size'] = 10\n",
+                "plt.rcParams['axes.grid'] = True\n",
+                "plt.rcParams['grid.alpha'] = 0.3\n",
+                "print(\"Libraries loaded successfully ✔\")"
+            ]
+        },
+        {
+            "cell_type": "code",
+            "execution_count": None,
+            "metadata": {},
+            "outputs": [],
+            "source": [
+                "# ============================================================\n",
+                "# 1. LOAD ALMA PUBLISHED TIMESERIES\n",
+                "# ============================================================\n",
+                "pub_path = r\"../data/exports/alma_published_timeseries.csv\"\n",
+                "df_pub = pd.read_csv(pub_path, parse_dates=['datetime'])\n",
+                "\n",
+                "# Convert gust from km/h to m/s\n",
+                "df_pub['gust_ms'] = df_pub['gust'] / 3.6\n",
+                "\n",
+                "print(f\"Loaded {len(df_pub):,} published records.\")\n",
+                "print(df_pub[['datetime', 'speed', 'gust', 'gust_ms']].head())"
+            ]
+        },
+        {
+            "cell_type": "code",
+            "execution_count": None,
+            "metadata": {},
+            "outputs": [],
+            "source": [
+                "# ============================================================\n",
+                "# 2. LOAD ERA5 DATA FOR ALMA SITE\n",
+                "# ============================================================\n",
+                "# Coordinates for ALMA site from config\n",
+                "ALMA_LAT = -23.029\n",
+                "ALMA_LON = -67.755\n",
+                "\n",
+                "chile_files = sorted(glob.glob(r\"../data/raw/chile/chile_*.nc\"))\n",
+                "print(f\"Found {len(chile_files)} ERA5 NetCDF files.\")\n",
+                "\n",
+                "era5_records = []\n",
+                "for f in chile_files:\n",
+                "    with xr.open_dataset(f) as ds:\n",
+                "        # Extract nearest grid point to ALMA site\n",
+                "        point_ds = ds.sel(latitude=ALMA_LAT, longitude=ALMA_LON, method='nearest')\n",
+                "        # Extract valid_time and i10fg (instantaneous 10m wind gust in m/s)\n",
+                "        df_pt = point_ds['i10fg'].to_dataframe().reset_index()\n",
+                "        era5_records.append(df_pt[['valid_time', 'i10fg']])\n",
+                "\n",
+                "df_era5 = pd.concat(era5_records, ignore_index=True)\n",
+                "df_era5 = df_era5.rename(columns={'valid_time': 'datetime'})\n",
+                "print(f\"Loaded {len(df_era5):,} ERA5 records.\")\n",
+                "print(df_era5.head())"
+            ]
+        },
+        {
+            "cell_type": "code",
+            "execution_count": None,
+            "metadata": {},
+            "outputs": [],
+            "source": [
+                "# ============================================================\n",
+                "# 3. ALIGN DATA AND CALCULATE STATISTICS\n",
+                "# ============================================================\n",
+                "merged_df = pd.merge(df_pub, df_era5, on='datetime', how='inner')\n",
+                "merged_df = merged_df.dropna(subset=['gust_ms', 'i10fg'])\n",
+                "merged_df = merged_df.sort_values('datetime').reset_index(drop=True)\n",
+                "\n",
+                "print(f\"Aligned dataset size: {len(merged_df):,} records.\")\n",
+                "\n",
+                "# Compute metrics\n",
+                "diff = merged_df['i10fg'] - merged_df['gust_ms']\n",
+                "rmse = np.sqrt((diff ** 2).mean())\n",
+                "bias = diff.mean()\n",
+                "mae = diff.abs().mean()\n",
+                "corr = merged_df['gust_ms'].corr(merged_df['i10fg'])\n",
+                "\n",
+                "print(\"\\n--- Wind Gust Comparison Metrics ---\")\n",
+                "print(f\"Mean Published Gust : {merged_df['gust_ms'].mean():.2f} m/s\")\n",
+                "print(f\"Mean ERA5 Gust      : {merged_df['i10fg'].mean():.2f} m/s\")\n",
+                "print(f\"Root Mean Sq. Error : {rmse:.2f} m/s\")\n",
+                "print(f\"Mean Bias Error     : {bias:.2f} m/s (Positive = ERA5 overestimates)\")\n",
+                "print(f\"Mean Absolute Error : {mae:.2f} m/s\")\n",
+                "print(f\"Pearson Correlation : {corr:.4f}\")"
+            ]
+        },
+        {
+            "cell_type": "code",
+            "execution_count": None,
+            "metadata": {},
+            "outputs": [],
+            "source": [
+                "# ============================================================\n",
+                "# 4. PLOT GUST COMPARISON TIMESERIES AND CORRELATION\n",
+                "# ============================================================\n",
+                "fig = plt.figure(figsize=(16, 12))\n",
+                "gs = fig.add_gridspec(3, 1, height_ratios=[1.2, 1, 1.2], hspace=0.35)\n",
+                "\n",
+                "# --- Panel 1: Full 2-Year Timeseries ---\n",
+                "ax1 = fig.add_subplot(gs[0])\n",
+                "# Plot hourly data with high transparency\n",
+                "ax1.plot(merged_df['datetime'], merged_df['gust_ms'], color='#1f77b4', alpha=0.25, label='Hourly Ground-Based (m/s)', linewidth=0.5)\n",
+                "ax1.plot(merged_df['datetime'], merged_df['i10fg'], color='#ff7f0e', alpha=0.25, label='Hourly ERA5 (m/s)', linewidth=0.5)\n",
+                "\n",
+                "# Calculate and plot 7-day rolling maximums for visual clarity\n",
+                "df_rolled = merged_df.set_index('datetime').rolling('7D')\n",
+                "roll_max_pub = df_rolled['gust_ms'].max()\n",
+                "roll_max_era5 = df_rolled['i10fg'].max()\n",
+                "\n",
+                "ax1.plot(roll_max_pub.index, roll_max_pub, color='#1f77b4', label='7-Day Rolling Max Ground-Based', linewidth=2.0)\n",
+                "ax1.plot(roll_max_era5.index, roll_max_era5, color='#ff7f0e', label='7-Day Rolling Max ERA5', linewidth=2.0)\n",
+                "\n",
+                "ax1.set_title('ALMA Weather Station Gust Comparison: Full 2-Year Timeseries (2001-2002)', fontsize=14, fontweight='bold', pad=10)\n",
+                "ax1.set_xlabel('Date', fontsize=11)\n",
+                "ax1.set_ylabel('Wind Speed (m/s)', fontsize=11)\n",
+                "ax1.legend(loc='upper right', frameon=True, facecolor='white', framealpha=0.9)\n",
+                "ax1.set_ylim(0, 45)\n",
+                "\n",
+                "# --- Panel 2: Zoomed-in View (December 2001) ---\n",
+                "ax2 = fig.add_subplot(gs[1])\n",
+                "zoom_start, zoom_end = '2001-12-01', '2001-12-31'\n",
+                "df_zoom = merged_df[(merged_df['datetime'] >= zoom_start) & (merged_df['datetime'] <= zoom_end)].sort_values('datetime')\n",
+                "\n",
+                "ax2.plot(df_zoom['datetime'], df_zoom['gust_ms'], color='#1f77b4', marker='o', markersize=3, label='Ground-Based Gust (m/s)', alpha=0.8)\n",
+                "ax2.plot(df_zoom['datetime'], df_zoom['i10fg'], color='#ff7f0e', marker='s', markersize=3, label='ERA5 Gust (m/s)', alpha=0.8)\n",
+                "\n",
+                "ax2.set_title(f'Detailed Hourly Alignment Zoom-In: December 2001', fontsize=12, fontweight='bold', pad=10)\n",
+                "ax2.set_xlabel('Date', fontsize=11)\n",
+                "ax2.set_ylabel('Wind Speed (m/s)', fontsize=11)\n",
+                "ax2.legend(loc='upper right', frameon=True, facecolor='white', framealpha=0.9)\n",
+                "ax2.set_ylim(0, 35)\n",
+                "\n",
+                "# --- Panel 3: Correlation Scatter Plot ---\n",
+                "sub_gs = gs[2].subgridspec(1, 3, width_ratios=[1, 1.5, 1])\n",
+                "ax3 = fig.add_subplot(sub_gs[1])\n",
+                "\n",
+                "ax3.scatter(merged_df['gust_ms'], merged_df['i10fg'], alpha=0.15, s=6, color='#2ca02c', label='Hourly Gust Match')\n",
+                "\n",
+                "# Fit a line\n",
+                "m_fit, b_fit = np.polyfit(merged_df['gust_ms'], merged_df['i10fg'], 1)\n",
+                "x_vals = np.linspace(0, 35, 100)\n",
+                "ax3.plot(x_vals, m_fit * x_vals + b_fit, color='#d62728', linewidth=2, label=f'Fit Line (slope={m_fit:.2f})')\n",
+                "\n",
+                "# Plot 1:1 reference line\n",
+                "max_val = max(merged_df['gust_ms'].max(), merged_df['i10fg'].max())\n",
+                "ax3.plot([0, max_val], [0, max_val], 'k--', label='1:1 Line', linewidth=1.5)\n",
+                "\n",
+                "ax3.set_title(f'Correlation Scatter Plot (Pearson R = {corr:.3f})', fontsize=12, fontweight='bold', pad=10)\n",
+                "ax3.set_xlabel('Ground-Based Gust (m/s)', fontsize=11)\n",
+                "ax3.set_ylabel('ERA5 Gust (m/s)', fontsize=11)\n",
+                "ax3.legend(loc='upper left', frameon=True, facecolor='white')\n",
+                "ax3.set_xlim(0, 35)\n",
+                "ax3.set_ylim(0, 35)\n",
+                "ax3.set_aspect('equal')\n",
+                "\n",
+                "plt.tight_layout()\n",
+                "output_plot_path = r\"../data/exports/gust_comparison.png\"\n",
+                "os.makedirs(os.path.dirname(output_plot_path), exist_ok=True)\n",
+                "plt.savefig(output_plot_path, dpi=150, bbox_inches='tight')\n",
+                "print(f\"Plot successfully saved to: {output_plot_path}\")\n",
+                "plt.show()"
+            ]
+        }
+    ]
+    
+    # Assembly
+    nb_content = {
+        "cells": cells,
+        "metadata": {
+            "kernelspec": {
+                "display_name": "Python 3",
+                "language": "python",
+                "name": "python3"
+            },
+            "language_info": {
+                "codemirror_mode": {
+                    "name": "ipython",
+                    "version": 3
+                },
+                "file_extension": ".py",
+                "mimetype": "text/x-python",
+                "name": "python",
+                "nbconvert_exporter": "python",
+                "pygments_lexer": "ipython3",
+                "version": "3.10.8"
+            }
+        },
+        "nbformat": 4,
+        "nbformat_minor": 5
+    }
+    
+    os.makedirs(os.path.dirname(notebook_path), exist_ok=True)
+    with open(notebook_path, "w", encoding="utf-8") as f:
+        json.dump(nb_content, f, indent=1)
+        
+    print(f"Created notebook successfully at: {notebook_path}")
+
+if __name__ == "__main__":
+    create_notebook()
