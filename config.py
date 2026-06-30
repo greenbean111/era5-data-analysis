@@ -44,4 +44,12 @@ OUTPUT_DIR = BASE_DIR + r"\outputs"
 
 CHILE_DIR = DATA_DIR + r"\chile"
 INDIA_DIR = DATA_DIR + r"\HN Data Monthly"
+PUBLISHED_DIR = DATA_DIR + r"\alma_published"
+
+PUBLISHED_COLS = {
+    "timestamp": 0,
+    "gust": 6,
+    "speed": 7,
+    "direction": 10
+}
 
