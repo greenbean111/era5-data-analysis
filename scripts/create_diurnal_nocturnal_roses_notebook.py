@@ -2,7 +2,7 @@ import json
 import os
 
 def create_notebook():
-    notebook_path = r"notebooks/Diurnal_Nocturnal_Wind_Roses.ipynb"
+    notebook_path = r"notebooks/chile/Diurnal_Nocturnal_Wind_Roses.ipynb"
     
     # Cells definition
     cells = [
